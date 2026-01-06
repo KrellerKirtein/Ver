@@ -1,35 +1,35 @@
 @echo off
-:: Delphi °æ±¾ºÅÉı¼¶¹¤¾ß¿ì½İÆô¶¯Æ÷
-:: ÓÃ·¨: bump <ÏîÄ¿Ä¿Â¼> [°æ±¾ºÅ]
-:: Ê¾Àı: bump 10_2503_6        (×Ô¶¯+1)
-::       bump 10_2503_6 10     (ÉèÖÃÎª10)
-::       bump 10_2503_6 -n     (Ô¤ÀÀÄ£Ê½)
+:: Delphi ç‰ˆæœ¬å·å‡çº§å·¥å…·å¿«æ·å¯åŠ¨å™¨
+:: ç”¨æ³•: bump <é¡¹ç›®ç›®å½•> [ç‰ˆæœ¬å·]
+:: ç¤ºä¾‹: bump 10_2503_6        (è‡ªåŠ¨+1)
+::       bump 10_2503_6 10     (è®¾ç½®ä¸º10)
+::       bump 10_2503_6 -n     (é¢„è§ˆæ¨¡å¼)
 
 setlocal
 cd /d "%~dp0"
 
 if "%~1"=="" (
     echo.
-    echo   Delphi °æ±¾ºÅÉı¼¶¹¤¾ß
+    echo   Delphi ç‰ˆæœ¬å·å‡çº§å·¥å…·
     echo   =====================
     echo.
-    echo   ÓÃ·¨: bump ^<ÏîÄ¿Ä¿Â¼^> [Ñ¡Ïî]
+    echo   ç”¨æ³•: bump ^<é¡¹ç›®ç›®å½•^> [é€‰é¡¹]
     echo.
-    echo   Ñ¡Ïî:
-    echo     ^<Êı×Ö^>    Ö¸¶¨ĞÂµÄ Build ºÅ
-    echo     -n        Ô¤ÀÀÄ£Ê½£¬²»Êµ¼ÊĞŞ¸Ä
-    echo     --help    ÏÔÊ¾ÏêÏ¸°ïÖú
+    echo   é€‰é¡¹:
+    echo     ^<æ•°å­—^>    æŒ‡å®šæ–°çš„ Build å·
+    echo     -n        é¢„è§ˆæ¨¡å¼ï¼Œä¸å®é™…ä¿®æ”¹
+    echo     --help    æ˜¾ç¤ºè¯¦ç»†å¸®åŠ©
     echo.
-    echo   Ê¾Àı:
-    echo     bump 10_2503_6           ×Ô¶¯½« Build +1
-    echo     bump 10_2503_6 10        ½« Build ÉèÖÃÎª 10
-    echo     bump 10_2503_6 -n        Ô¤ÀÀÄ£Ê½
-    echo     bump .\MyProject         ´¦Àíµ±Ç°Ä¿Â¼ÏÂµÄÏîÄ¿
+    echo   ç¤ºä¾‹:
+    echo     bump 10_2503_6           è‡ªåŠ¨å°† Build +1
+    echo     bump 10_2503_6 10        å°† Build è®¾ç½®ä¸º 10
+    echo     bump 10_2503_6 -n        é¢„è§ˆæ¨¡å¼
+    echo     bump .\MyProject         å¤„ç†å½“å‰ç›®å½•ä¸‹çš„é¡¹ç›®
     echo.
     exit /b 0
 )
 
-:: ¼ì²éÊÇ·ñÊÇ°ïÖúÇëÇó
+:: æ£€æŸ¥æ˜¯å¦æ˜¯å¸®åŠ©è¯·æ±‚
 if "%~1"=="--help" (
     python "%~dp0version_bumper.py" --help
     exit /b 0
@@ -39,22 +39,36 @@ if "%~1"=="-h" (
     exit /b 0
 )
 
-:: ½âÎö²ÎÊı
+:: è§£æå‚æ•°
 set "PROJECT=%~1"
 set "OPTION=%~2"
 
-:: ¼ì²éµÚ¶ş¸ö²ÎÊı
+:: æ£€æŸ¥ç¬¬äºŒä¸ªå‚æ•°
 if "%OPTION%"=="" (
-    :: Ö»ÓĞÏîÄ¿Â·¾¶£¬×Ô¶¯+1
+    :: åªæœ‰é¡¹ç›®è·¯å¾„ï¼Œè‡ªåŠ¨+1
     python "%~dp0version_bumper.py" "%PROJECT%"
 ) else if "%OPTION%"=="-n" (
-    :: Ô¤ÀÀÄ£Ê½
+    :: é¢„è§ˆæ¨¡å¼
     python "%~dp0version_bumper.py" "%PROJECT%" --dry-run
 ) else if "%OPTION%"=="--dry-run" (
-    :: Ô¤ÀÀÄ£Ê½
+    :: é¢„è§ˆæ¨¡å¼
     python "%~dp0version_bumper.py" "%PROJECT%" --dry-run
+) else if "%OPTION%"=="-t" (
+    :: Trunk mode: Minor +1
+    if "%OPTION3%"=="" (
+        python "%~dp0version_bumper.py" "%PROJECT%" --trunk
+    ) else (
+        python "%~dp0version_bumper.py" "%PROJECT%" --trunk %OPTION3%
+    )
+) else if "%OPTION%"=="--trunk" (
+    :: Trunk mode: Minor +1
+    if "%OPTION3%"=="" (
+        python "%~dp0version_bumper.py" "%PROJECT%" --trunk
+    ) else (
+        python "%~dp0version_bumper.py" "%PROJECT%" --trunk %OPTION3%
+    )
 ) else (
-    :: ¼ÙÉèÊÇ°æ±¾ºÅ
+    :: å‡è®¾æ˜¯ç‰ˆæœ¬å·
     python "%~dp0version_bumper.py" "%PROJECT%" --build %OPTION%
 )
 

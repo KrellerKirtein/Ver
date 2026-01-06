@@ -134,57 +134,86 @@ class DprojVersionBumper:
         """分析 .dproj 文件中的版本号"""
         if not self.load():
             return False
-        
-        # 查找 VerInfo_Release
-        release_match = re.search(r'<VerInfo_Release>(\d+)</VerInfo_Release>', self.content)
-        if not release_match:
-            print_error("错误: 无法找到 VerInfo_Release 标签")
-            return False
-        
-        # 查找 FileVersion
+
+        # 查找 FileVersion (必须存在)
         file_version_match = re.search(r'FileVersion=(\d+\.\d+\.\d+\.\d+)', self.content)
         if not file_version_match:
             print_error("错误: 无法找到 FileVersion")
             return False
-        
+
         version_str = file_version_match.group(1)
         self.current_version = VersionInfo.from_string(version_str)
-        
+
+        # 查找版本标签 (VerInfo_Release 或 VerInfo_MinorVer，可选)
+        release_match = re.search(r'<VerInfo_Release>(\d+)</VerInfo_Release>', self.content)
+        minor_match = re.search(r'<VerInfo_MinorVer>(\d+)</VerInfo_MinorVer>', self.content)
+
         print()
         print_info("=== .dproj 版本信息 ===")
-        print(f"  VerInfo_Release: {release_match.group(1)}")
+        if release_match:
+            print(f"  VerInfo_Release: {release_match.group(1)}")
+        if minor_match:
+            print(f"  VerInfo_MinorVer: {minor_match.group(1)}")
         print(f"  FileVersion: {version_str}")
-        
+
         return True
     
-    def update(self, new_build: int) -> bool:
-        """更新 .dproj 文件中的版本号"""
+    def update(self, new_build: int = None, new_minor: int = None) -> bool:
+        """更新 .dproj 文件中的版本号
+
+        Args:
+            new_build: 新的 Build 号（标准模式）
+            new_minor: 新的 Minor 号（trunk 模式）
+        """
         if self.current_version is None:
             raise RuntimeError("未分析版本信息")
-        
+
         old_build = self.current_version.build
-        
-        # 1. 更新 VerInfo_Release
-        old_pattern = f'<VerInfo_Release>{old_build}</VerInfo_Release>'
-        new_pattern = f'<VerInfo_Release>{new_build}</VerInfo_Release>'
-        
-        if old_pattern in self.content:
-            self.content = self.content.replace(old_pattern, new_pattern)
-            self.modifications.append(ModificationRecord(
-                file=".dproj",
-                location="VerInfo_Release",
-                type_desc="VerInfo_Release 标签",
-                old_value=str(old_build),
-                new_value=str(new_build)
-            ))
-        
+        old_minor = self.current_version.minor
+
+        # 确定新的版本号
+        target_build = new_build if new_build is not None else old_build
+        target_minor = new_minor if new_minor is not None else old_minor
+
+        # 判断是 trunk 模式还是标准模式
+        is_trunk_mode = new_minor is not None
+
+        if is_trunk_mode:
+            # Trunk 模式：更新 VerInfo_MinorVer
+            old_pattern = f'<VerInfo_MinorVer>{old_minor}</VerInfo_MinorVer>'
+            new_pattern = f'<VerInfo_MinorVer>{target_minor}</VerInfo_MinorVer>'
+
+            if old_pattern in self.content:
+                self.content = self.content.replace(old_pattern, new_pattern)
+                self.modifications.append(ModificationRecord(
+                    file=".dproj",
+                    location="VerInfo_MinorVer",
+                    type_desc="VerInfo_MinorVer 标签",
+                    old_value=str(old_minor),
+                    new_value=str(target_minor)
+                ))
+        else:
+            # 标准模式：更新 VerInfo_Release (Build 号)
+            old_pattern = f'<VerInfo_Release>{old_build}</VerInfo_Release>'
+            new_pattern = f'<VerInfo_Release>{target_build}</VerInfo_Release>'
+
+            if old_pattern in self.content:
+                self.content = self.content.replace(old_pattern, new_pattern)
+                self.modifications.append(ModificationRecord(
+                    file=".dproj",
+                    location="VerInfo_Release",
+                    type_desc="VerInfo_Release 标签",
+                    old_value=str(old_build),
+                    new_value=str(target_build)
+                ))
+
         # 2. 更新 VerInfo_Keys 中的 FileVersion
-        old_file_ver = f"{self.current_version.major}.{self.current_version.minor}.{old_build}.{self.current_version.release}"
-        new_file_ver = f"{self.current_version.major}.{self.current_version.minor}.{new_build}.{self.current_version.release}"
-        
+        old_file_ver = f"{self.current_version.major}.{old_minor}.{old_build}.{self.current_version.release}"
+        new_file_ver = f"{self.current_version.major}.{target_minor}.{target_build}.{self.current_version.release}"
+
         old_ver_pattern = f'FileVersion={old_file_ver}'
         new_ver_pattern = f'FileVersion={new_file_ver}'
-        
+
         if old_ver_pattern in self.content:
             self.content = self.content.replace(old_ver_pattern, new_ver_pattern)
             self.modifications.append(ModificationRecord(
@@ -194,7 +223,7 @@ class DprojVersionBumper:
                 old_value=old_file_ver,
                 new_value=new_file_ver
             ))
-        
+
         return True
     
     def save(self, backup: bool = True) -> bool:
@@ -337,71 +366,235 @@ class ResVersionBumper:
             return False
         return True
     
-    def calculate_new_version(self, new_build: Optional[int] = None) -> VersionInfo:
-        """计算新版本号 (修改 Build 字段)"""
+    def calculate_new_version(self, new_build: Optional[int] = None,
+                               new_minor: Optional[int] = None) -> VersionInfo:
+        """计算新版本号 (修改 Build 或 Minor 字段)
+
+        Args:
+            new_build: 新的 Build 号（标准模式）
+            new_minor: 新的 Minor 号（trunk 模式）
+        """
         if self.current_version is None:
             raise RuntimeError("未分析版本信息")
-        
-        if new_build is None:
-            new_build = self.current_version.build + 1
-        
+
+        # 确定目标版本号
+        target_build = new_build if new_build is not None else self.current_version.build
+        target_minor = new_minor if new_minor is not None else self.current_version.minor
+
+        # 如果都没指定，默认 build +1
+        if new_build is None and new_minor is None:
+            target_build = self.current_version.build + 1
+
         self.new_version = VersionInfo(
             major=self.current_version.major,
-            minor=self.current_version.minor,
-            build=new_build,  # 更新 Build
-            release=self.current_version.release  # 保持 Release 不变
+            minor=target_minor,
+            build=target_build,
+            release=self.current_version.release
         )
-        
+
         return self.new_version
     
     def update_binary_version(self):
-        """更新二进制版本号 (修改 FileVersionLS 和 ProductVersionLS 的高16位)"""
+        """更新二进制版本号
+
+        VS_FIXEDFILEINFO 结构中：
+        - FileVersionMS (4 bytes): HIWORD=Major, LOWORD=Minor
+        - FileVersionLS (4 bytes): HIWORD=Build, LOWORD=Release
+        """
         if self.new_version is None:
             raise RuntimeError("未计算新版本号")
-        
-        new_build = self.new_version.build
-        
-        # FileVersionLS: 高16位是 Build，低16位是 Release
-        # 我们只修改高16位 (Build)
-        
-        # 偏移 +2 是 Build 所在的位置 (因为是小端序，低字节在前)
-        build_offset = self.file_version_ls_offset + 2
-        
-        old_bytes = self.data[build_offset:build_offset + 2]
-        old_value = f"0x{old_bytes[1]:02X}{old_bytes[0]:02X} ({struct.unpack_from('<H', self.data, build_offset)[0]})"
-        
-        # 写入新的 Build 值
-        struct.pack_into('<H', self.data, build_offset, new_build)
-        
-        new_bytes = self.data[build_offset:build_offset + 2]
-        new_value = f"0x{new_bytes[1]:02X}{new_bytes[0]:02X} ({new_build})"
-        
-        self.modifications.append(ModificationRecord(
-            file=".res",
-            location=f"0x{build_offset:X}",
-            type_desc="FileVersionLS.Build (二进制)",
-            old_value=old_value,
-            new_value=new_value
-        ))
-        
-        # 注意: 不更新 ProductVersionLS，因为它在 Delphi 项目中通常独立设置
+
+        # 检查是否需要更新 Minor（trunk 模式）
+        if self.current_version.minor != self.new_version.minor:
+            # Minor 在 FileVersionMS 的低16位
+            # FileVersionMS 偏移: ffi_offset + 4 (signature) + 4 (strucVersion)
+            file_version_ms_offset = self.ffi_offset + 4 + 4
+            minor_offset = file_version_ms_offset  # 小端序，低16位在前
+
+            old_bytes = self.data[minor_offset:minor_offset + 2]
+            old_value = f"0x{old_bytes[1]:02X}{old_bytes[0]:02X} ({struct.unpack_from('<H', self.data, minor_offset)[0]})"
+
+            # 写入新的 Minor 值
+            struct.pack_into('<H', self.data, minor_offset, self.new_version.minor)
+
+            new_bytes = self.data[minor_offset:minor_offset + 2]
+            new_value = f"0x{new_bytes[1]:02X}{new_bytes[0]:02X} ({self.new_version.minor})"
+
+            self.modifications.append(ModificationRecord(
+                file=".res",
+                location=f"0x{minor_offset:X}",
+                type_desc="FileVersionMS.Minor (二进制)",
+                old_value=old_value,
+                new_value=new_value
+            ))
+
+        # 检查是否需要更新 Build（标准模式）
+        if self.current_version.build != self.new_version.build:
+            new_build = self.new_version.build
+
+            # FileVersionLS: 高16位是 Build，低16位是 Release
+            # 偏移 +2 是 Build 所在的位置 (因为是小端序，低字节在前)
+            build_offset = self.file_version_ls_offset + 2
+
+            old_bytes = self.data[build_offset:build_offset + 2]
+            old_value = f"0x{old_bytes[1]:02X}{old_bytes[0]:02X} ({struct.unpack_from('<H', self.data, build_offset)[0]})"
+
+            # 写入新的 Build 值
+            struct.pack_into('<H', self.data, build_offset, new_build)
+
+            new_bytes = self.data[build_offset:build_offset + 2]
+            new_value = f"0x{new_bytes[1]:02X}{new_bytes[0]:02X} ({new_build})"
+
+            self.modifications.append(ModificationRecord(
+                file=".res",
+                location=f"0x{build_offset:X}",
+                type_desc="FileVersionLS.Build (二进制)",
+                old_value=old_value,
+                new_value=new_value
+            ))
     
     def update_string_version(self) -> bool:
-        """更新字符串版本号 (支持跨位数升级，如 9->10, 99->100)"""
+        """更新字符串版本号 (支持 Build 和 Minor 的跨位数升级)"""
         if self.current_version is None or self.new_version is None:
             raise RuntimeError("版本信息未初始化")
-        
-        old_build_str = str(self.current_version.build)
-        new_build_str = str(self.new_version.build)
-        
-        len_diff = len(new_build_str) - len(old_build_str)
-        
-        if len_diff == 0:
-            # 长度相同，直接替换
-            return self._update_string_version_same_length(old_build_str, new_build_str)
+
+        # 判断是更新 Minor 还是 Build
+        is_minor_changed = self.current_version.minor != self.new_version.minor
+        is_build_changed = self.current_version.build != self.new_version.build
+
+        if is_minor_changed:
+            # Trunk 模式：更新 Minor
+            old_minor_str = str(self.current_version.minor)
+            new_minor_str = str(self.new_version.minor)
+            len_diff = len(new_minor_str) - len(old_minor_str)
+
+            if len_diff == 0:
+                return self._update_string_version_minor_same_length(old_minor_str, new_minor_str)
+            else:
+                return self._update_string_version_minor_diff_length(old_minor_str, new_minor_str, len_diff)
+        elif is_build_changed:
+            # 标准模式：更新 Build
+            old_build_str = str(self.current_version.build)
+            new_build_str = str(self.new_version.build)
+            len_diff = len(new_build_str) - len(old_build_str)
+
+            if len_diff == 0:
+                return self._update_string_version_same_length(old_build_str, new_build_str)
+            else:
+                return self._update_string_version_diff_length(old_build_str, new_build_str, len_diff)
         else:
-            # 长度不同，需要调整结构
-            return self._update_string_version_diff_length(old_build_str, new_build_str, len_diff)
+            print_warning("警告: 版本号未发生变化")
+            return True
+
+    def _update_string_version_minor_same_length(self, old_minor_str: str, new_minor_str: str) -> bool:
+        """更新 Minor 字符串版本号 (长度相同)"""
+        # 在版本字符串中找到 Minor 部分的位置（第一个点之后）
+        version_start = self.file_version_string_offset
+        dot_count = 0
+        minor_str_offset = -1
+
+        i = version_start
+        while i < len(self.data) - 1:
+            char_code = struct.unpack_from('<H', self.data, i)[0]
+            if char_code == 0:
+                break
+            if char_code == ord('.'):
+                dot_count += 1
+                if dot_count == 1:
+                    minor_str_offset = i + 2
+                    break
+            i += 2
+
+        if minor_str_offset == -1:
+            print_warning("警告: 无法定位 Minor 字符串位置")
+            return False
+
+        # 更新 Minor 字符串
+        for j, char in enumerate(new_minor_str):
+            struct.pack_into('<H', self.data, minor_str_offset + j * 2, ord(char))
+
+        self.modifications.append(ModificationRecord(
+            file=".res",
+            location=f"0x{minor_str_offset:X}",
+            type_desc="FileVersion 字符串 (Minor)",
+            old_value=old_minor_str,
+            new_value=new_minor_str
+        ))
+
+        # 更新所有其他版本字符串
+        self._update_all_version_strings_for_minor(old_minor_str, new_minor_str)
+
+        return True
+
+    def _update_string_version_minor_diff_length(self, old_minor_str: str, new_minor_str: str, len_diff: int) -> bool:
+        """更新 Minor 字符串版本号 (长度不同)"""
+        byte_diff = len_diff * 2
+        aligned_byte_diff = ((byte_diff + 3) // 4) * 4
+
+        print_info(f"  Minor 长度变化: {len(old_minor_str)} -> {len(new_minor_str)} (字节差异: {byte_diff:+d})")
+
+        # 使用完整版本号替换策略
+        old_version = str(self.current_version)
+        new_version = str(self.new_version)
+
+        old_pattern = old_version.encode('utf-16-le')
+        new_pattern = new_version.encode('utf-16-le')
+
+        # 查找所有匹配位置（从后往前替换）
+        positions = []
+        pos = 0
+        while True:
+            pos = self.data.find(old_pattern, pos)
+            if pos == -1:
+                break
+            positions.append(pos)
+            pos += len(old_pattern)
+
+        if not positions:
+            print_error("错误: 无法找到版本字符串进行替换")
+            return False
+
+        # 从后往前替换
+        for pos in reversed(positions):
+            self.data = self.data[:pos] + bytearray(new_pattern) + self.data[pos + len(old_pattern):]
+
+        self.modifications.append(ModificationRecord(
+            file=".res",
+            location="多处",
+            type_desc="版本字符串 (Minor)",
+            old_value=old_version,
+            new_value=new_version
+        ))
+
+        # 更新长度字段
+        self._update_length_fields(byte_diff, aligned_byte_diff, 0)
+
+        print_info(f"  (共更新 {len(positions)} 处版本字符串)")
+
+        return True
+
+    def _update_all_version_strings_for_minor(self, old_minor: str, new_minor: str):
+        """更新文件中所有的 Minor 版本字符串 (长度相同时)"""
+        # 构建完整版本号的搜索模式进行替换
+        old_version = str(self.current_version)
+        new_version = str(self.new_version)
+
+        old_pattern = old_version.encode('utf-16-le')
+        new_pattern = new_version.encode('utf-16-le')
+
+        pos = 0
+        count = 0
+        while True:
+            pos = self.data.find(old_pattern, pos)
+            if pos == -1:
+                break
+            for i, byte in enumerate(new_pattern):
+                self.data[pos + i] = byte
+            count += 1
+            pos += len(old_pattern)
+
+        if count > 1:
+            print_info(f"  (共更新 {count} 处版本字符串)")
     
     def _update_string_version_same_length(self, old_build_str: str, new_build_str: str) -> bool:
         """更新字符串版本号 (长度相同)"""
@@ -751,7 +944,7 @@ class ResVersionBumper:
 
 class ProjectVersionBumper:
     """Delphi 项目版本号升级器 (同时处理 .res 和 .dproj 文件)"""
-    
+
     def __init__(self, project_dir: str):
         self.project_dir = os.path.abspath(project_dir)
         self.res_file: Optional[str] = None
@@ -760,6 +953,7 @@ class ProjectVersionBumper:
         self.dproj_bumper: Optional[DprojVersionBumper] = None
         self.current_version: Optional[VersionInfo] = None
         self.new_version: Optional[VersionInfo] = None
+        self.trunk_mode: bool = False  # trunk 模式：升级 Minor 版本号
     
     def find_files(self) -> bool:
         """查找项目中的 .res 和 .dproj 文件"""
@@ -793,20 +987,22 @@ class ProjectVersionBumper:
         
         return True
     
-    def bump(self, new_build: Optional[int] = None, dry_run: bool = False) -> bool:
+    def bump(self, new_build: Optional[int] = None, new_minor: Optional[int] = None,
+             dry_run: bool = False) -> bool:
         """
         执行版本号升级
-        
+
         Args:
             new_build: 指定新的 Build 号，None 表示自动 +1
+            new_minor: 指定新的 Minor 号（trunk 模式），None 表示自动 +1
             dry_run: 预览模式，不实际保存文件
-        
+
         Returns:
             是否成功
         """
         print()
         print_colored("=" * 60, Colors.HEADER)
-        print_colored("     Delphi 版本号升级工具 v2.0", Colors.HEADER)
+        print_colored("     Delphi 版本号升级工具 v2.1", Colors.HEADER)
         print_colored("     同时更新 .res 和 .dproj 文件", Colors.HEADER)
         print_colored("=" * 60, Colors.HEADER)
         print()
@@ -837,19 +1033,32 @@ class ProjectVersionBumper:
         
         if res_ver.build != dproj_ver.build:
             print_warning(f"警告: .res ({res_ver}) 和 .dproj ({dproj_ver}) 版本号不一致!")
-        
+
         self.current_version = res_ver
-        
+
         # 6. 计算新版本号
-        if new_build is None:
-            new_build = self.current_version.build + 1
-        
-        self.new_version = VersionInfo(
-            major=self.current_version.major,
-            minor=self.current_version.minor,
-            build=new_build,
-            release=self.current_version.release
-        )
+        # 判断是否为 trunk 模式（升级 Minor 版本号）
+        if new_minor is not None or self.trunk_mode:
+            # trunk 模式：升级 Minor 版本号
+            if new_minor is None:
+                new_minor = self.current_version.minor + 1
+            self.new_version = VersionInfo(
+                major=self.current_version.major,
+                minor=new_minor,
+                build=self.current_version.build,
+                release=self.current_version.release
+            )
+            print_info(f"  [Trunk 模式] 升级 Minor 版本号: {self.current_version.minor} -> {new_minor}")
+        else:
+            # 标准模式：升级 Build 版本号
+            if new_build is None:
+                new_build = self.current_version.build + 1
+            self.new_version = VersionInfo(
+                major=self.current_version.major,
+                minor=self.current_version.minor,
+                build=new_build,
+                release=self.current_version.release
+            )
         
         self.res_bumper.new_version = self.new_version
         self.dproj_bumper.new_version = self.new_version
@@ -871,7 +1080,11 @@ class ProjectVersionBumper:
         
         print()
         print_colored(">>> 更新 .dproj 文件", Colors.BLUE)
-        self.dproj_bumper.update(new_build)
+        # 根据模式选择更新参数
+        if new_minor is not None or self.trunk_mode:
+            self.dproj_bumper.update(new_minor=self.new_version.minor)
+        else:
+            self.dproj_bumper.update(new_build=self.new_version.build)
         
         # 8. 汇总所有修改
         all_modifications = self.res_bumper.modifications + self.dproj_bumper.modifications
@@ -913,19 +1126,23 @@ def main():
 示例:
   %(prog)s ./10_2503_6             # 自动将版本号 Build +1 (如 10.2503.6.0 -> 10.2503.7.0)
   %(prog)s ./10_2503_6 --build 8   # 将 Build 设置为 8
+  %(prog)s ./10_2503_6 --trunk     # Trunk 模式: Minor +1 (如 10.2503.6.0 -> 10.2504.6.0)
+  %(prog)s ./10_2503_6 -t 2505     # 将 Minor 设置为 2505
   %(prog)s ./10_2503_6 --dry-run   # 预览模式，不实际修改
   %(prog)s TubePro.res             # 也可以直接指定 .res 文件
         '''
     )
-    
+
     parser.add_argument('project_path', help='项目目录或 .res 文件路径')
     parser.add_argument('--build', '-b', type=int, default=None,
                         help='指定新的 Build 号 (默认: 自动 +1)')
+    parser.add_argument('--trunk', '-t', type=int, nargs='?', const=-1, default=None,
+                        help='Trunk 模式: 升级 Minor 版本号 (默认: 自动 +1，可指定具体值)')
     parser.add_argument('--dry-run', '-n', action='store_true',
                         help='预览模式，不实际修改文件')
-    
+
     args = parser.parse_args()
-    
+
     # 启用 Windows 终端的 ANSI 颜色支持
     if sys.platform == 'win32':
         try:
@@ -934,10 +1151,18 @@ def main():
             kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
         except:
             pass
-    
+
     bumper = ProjectVersionBumper(args.project_path)
-    success = bumper.bump(new_build=args.build, dry_run=args.dry_run)
-    
+
+    # 处理 trunk 参数
+    new_minor = None
+    if args.trunk is not None:
+        bumper.trunk_mode = True
+        if args.trunk != -1:  # 用户指定了具体值
+            new_minor = args.trunk
+
+    success = bumper.bump(new_build=args.build, new_minor=new_minor, dry_run=args.dry_run)
+
     sys.exit(0 if success else 1)
 
 
